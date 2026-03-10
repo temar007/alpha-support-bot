@@ -289,7 +289,7 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     if not IS_WINDOWS:
         # Для Koyeb: тільки режим сервера без спроб відкрити браузер
-        port = int(os.getenv("PORT", 8080))
+        port = int(os.getenv("PORT", 8000))
         print(f"🌐 Starting server on port {port}...")
         ft.app(
             target=main, 
@@ -299,4 +299,5 @@ if __name__ == "__main__":
         )
     else:
         ft.app(target=main)
+
 
