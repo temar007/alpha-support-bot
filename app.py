@@ -1,5 +1,6 @@
 import flet as ft
 import telebot
+from telebot import apihelper
 import httpx
 import os
 import threading
@@ -22,13 +23,15 @@ else:
     Image = None 
 
 # --- КОНФІГУРАЦІЯ ---
-try:
-    import config
-except ImportError:
-    config = None
-
 def get_setting(key, default=None):
-    return os.getenv(key) or (getattr(config, key, default) if config else default)
+    # Пріоритет: Environment Variables (Koyeb) -> Config (локально)
+    val = os.getenv(key)
+    if val: return val
+    try:
+        import config
+        return getattr(config, key, default)
+    except ImportError:
+        return default
 
 TOKEN = get_setting("TOKEN")
 SUPABASE_URL = get_setting("SUPABASE_URL")
@@ -109,21 +112,25 @@ def main(page: ft.Page):
 
     # --- REALTIME BRIDGE ---
     async def listen_supabase():
-        async_supabase: AsyncClient = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
-        def on_handle_async(payload):
-            new_row = payload['record']
-            page.pubsub.send_all({"type": "update", "user_id": new_row['user_id'], "name": new_row['sender'], "text": new_row.get('text', '')})
         try:
+            async_supabase: AsyncClient = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
+            def on_handle_async(payload):
+                new_row = payload['record']
+                page.pubsub.send_all({"type": "update", "user_id": new_row['user_id'], "name": new_row['sender'], "text": new_row.get('text', '')})
+            
             channel = async_supabase.channel('db-changes')
             await channel.on_postgres_changes(event="INSERT", table="messages", schema="public", callback=on_handle_async).subscribe()
             while True: await asyncio.sleep(1)
-        except: pass
+        except Exception as e:
+            print(f"Realtime connection lost: {e}")
+            await asyncio.sleep(5)
 
     threading.Thread(target=lambda: asyncio.run(listen_supabase()), daemon=True).start()
 
-    # --- ТЕЛЕГРАМ POLLING (для сервера) ---
+    # --- ТЕЛЕГРАМ POLLING ---
     @bot.message_handler(func=lambda m: True)
     def handle_tg(message):
+        print(f"📥 New message from {message.from_user.first_name}")
         new_row = {
             "user_id": message.chat.id,
             "sender": message.from_user.first_name,
@@ -134,7 +141,8 @@ def main(page: ft.Page):
         sb_api("messages", method="POST", data=new_row)
         page.pubsub.send_all({"type": "update", "user_id": message.chat.id, "name": message.from_user.first_name, "text": message.text})
 
-    threading.Thread(target=bot.infinity_polling, daemon=True).start()
+    print("🚀 Bot starting polling...")
+    threading.Thread(target=bot.infinity_polling, kwargs={"timeout": 20}, daemon=True).start()
 
     # --- ЛОГІКА УПРАВЛІННЯ ---
     def load_chat(user_id, reset_unread=True):
@@ -161,7 +169,7 @@ def main(page: ft.Page):
                 take_work_btn.visible, finish_btn.visible = True, False
 
             msgs = sb_api("messages", params={"select": "*", "user_id": f"eq.{user_id}", "order": "id.asc"})
-            for m in msgs:
+            for m in (msgs or []):
                 is_admin = "Я (" in (m.get("sender") or "")
                 elements = []
                 if m.get("file_path"):
@@ -204,10 +212,13 @@ def main(page: ft.Page):
     def send_reply(e):
         if not state["selected_id"] or not answer_input.value: return
         uid, txt = state["selected_id"], answer_input.value
-        res = bot.send_message(uid, txt, reply_to_message_id=state["reply_tg_id"])
-        sb_api("messages", method="POST", data={"user_id": uid, "sender": f"Я ({OPERATOR_NAME})", "text": txt, "timestamp": datetime.now().strftime('%H:%M'), "tg_msg_id": res.message_id})
-        answer_input.value, state["reply_tg_id"], reply_preview.visible = "", None, False
-        load_chat(uid)
+        try:
+            res = bot.send_message(uid, txt, reply_to_message_id=state["reply_tg_id"])
+            sb_api("messages", method="POST", data={"user_id": uid, "sender": f"Я ({OPERATOR_NAME})", "text": txt, "timestamp": datetime.now().strftime('%H:%M'), "tg_msg_id": res.message_id})
+            answer_input.value, state["reply_tg_id"], reply_preview.visible = "", None, False
+            load_chat(uid)
+        except Exception as ex:
+            print(f"Send error: {ex}")
 
     def delete_message(mid, uid):
         res = sb_api("messages", params={"select": "tg_msg_id", "id": f"eq.{mid}"})
@@ -277,6 +288,7 @@ def main(page: ft.Page):
 # --- RUN ---
 if __name__ == "__main__":
     if not IS_WINDOWS:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=7860)
+        port = int(os.getenv("PORT", 8080))
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=port)
     else:
         ft.app(target=main)
