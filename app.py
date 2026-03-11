@@ -46,23 +46,34 @@ bot = telebot.TeleBot(TOKEN)
 active_pages = []
 
 def sb_api(table, method="GET", data=None, params=None, is_storage=False):
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    # Додаємо правильний заголовок авторизації
+    headers = {
+        "apikey": SUPABASE_KEY, 
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    
     if is_storage:
+        # Шлях до файлу в Storage: bucket/object_name
         url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{table}"
     else:
+        url = f"{SUPABASE_URL}/rest/v1/{table}"
         headers["Content-Type"] = "application/json"
         headers["Prefer"] = "return=representation"
-        url = f"{SUPABASE_URL}/rest/v1/{table}"
 
     try:
-        current_headers = headers.copy()
-        if method == "UPLOAD": current_headers["Content-Type"] = "image/jpeg"
-        with httpx.Client(headers=current_headers, timeout=25.0) as client:
-            if method == "GET": return client.get(url, params=params).json()
-            if method == "POST": return client.post(url, json=data).json()
-            if method == "PATCH": return client.patch(url, json=data, params=params).json()
-            if method == "DELETE": return client.delete(url, params=params)
-            if method == "UPLOAD": return client.post(url, content=data)
+        with httpx.Client(timeout=30.0) as client:
+            if method == "GET": return client.get(url, headers=headers, params=params).json()
+            if method == "POST": return client.post(url, headers=headers, json=data).json()
+            if method == "DELETE": return client.delete(url, headers=headers, params=params)
+            
+            # СПЕЦІАЛЬНО ДЛЯ STORAGE UPLOAD
+            if method == "UPLOAD":
+                # Для завантаження в Supabase Storage через HTTP POST/PUT
+                # Треба передати файл як бінарні дані з правильним Content-Type
+                headers["Content-Type"] = "image/jpeg" 
+                # Важливо: використовуємо POST для нових файлів
+                return client.post(url, headers=headers, content=data)
+                
     except Exception as e:
         print(f"!!! API Error: {e}")
         return None
@@ -152,3 +163,4 @@ if __name__ == "__main__":
         ft.app(target=main, view=None, host="0.0.0.0", port=port)
     else:
         ft.app(target=main)
+
