@@ -82,6 +82,12 @@ def handle_tg(message):
 # --- ЗАПУСК ---
 if __name__ == "__main__":
     print("🤖 Bridge is starting...")
-    bot.remove_webhook(drop_pending_updates=True)
-    # Жодного ft.app()! Тільки поллінг.
+    
+    # Видаляємо вебхук без додаткових аргументів
+    try:
+        bot.remove_webhook()
+    except:
+        pass
+        
+    print("📡 Polling started...")
     bot.infinity_polling(timeout=20)
