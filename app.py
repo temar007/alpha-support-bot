@@ -46,17 +46,20 @@ bot = telebot.TeleBot(TOKEN)
 active_pages = []
 
 def sb_api(table, method="GET", data=None, params=None, is_storage=False):
-    # Додаємо правильний заголовок авторизації
     headers = {
         "apikey": SUPABASE_KEY, 
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
     
     if is_storage:
-        # Шлях до файлу в Storage: bucket/object_name
         url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{table}"
+        # Налаштування саме для файлів
+        if method == "UPLOAD":
+            headers["Content-Type"] = "application/octet-stream"
+            headers["x-upsert"] = "true"
     else:
         url = f"{SUPABASE_URL}/rest/v1/{table}"
+        # Налаштування для тексту/бази даних
         headers["Content-Type"] = "application/json"
         headers["Prefer"] = "return=representation"
 
@@ -66,12 +69,8 @@ def sb_api(table, method="GET", data=None, params=None, is_storage=False):
             if method == "POST": return client.post(url, headers=headers, json=data).json()
             if method == "DELETE": return client.delete(url, headers=headers, params=params)
             
-            # СПЕЦІАЛЬНО ДЛЯ STORAGE UPLOAD
             if method == "UPLOAD":
-                # Для завантаження в Supabase Storage через HTTP POST/PUT
-                # Треба передати файл як бінарні дані з правильним Content-Type
-                headers["Content-Type"] = "image/jpeg" 
-                # Важливо: використовуємо POST для нових файлів
+                # Тут використовуємо 'content=data' для бінарних файлів
                 return client.post(url, headers=headers, content=data)
                 
     except Exception as e:
@@ -163,4 +162,5 @@ if __name__ == "__main__":
         ft.app(target=main, view=None, host="0.0.0.0", port=port)
     else:
         ft.app(target=main)
+
 
