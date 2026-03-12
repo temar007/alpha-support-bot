@@ -34,27 +34,49 @@ def sb_api(table, method="GET", data=None, is_storage=False):
     except: return None
 
 # --- ОБРОБНИК TG ---
-@bot.message_handler(content_types=['text', 'photo', 'document'])
+# --- ТЕЛЕГРАМ POLLING ---
+@bot.message_handler(func=lambda m: True)
 def handle_tg(message):
-    file_name = None
-    text_content = message.text or message.caption or ""
-    if message.content_type == 'photo':
-        try:
-            file_id = message.photo[-1].file_id
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            file_name = f"tg_{int(time.time())}.jpg"
-            sb_api(file_name, method="UPLOAD", data=downloaded_file, is_storage=True)
-            if not text_content: text_content = "[Фото]"
-        except: pass
+    uid = message.chat.id
+    name = message.from_user.first_name or "Unknown"
+    
+    print(f"📥 New message from {name} (ID: {uid})")
+    
+    # 1. ПЕРЕВІРЯЄМО/СТВОРЮЄМО КЛІЄНТА
+    # Спробуємо оновити дату активності, якщо клієнт є. 
+    # Якщо його немає (результат порожній), створюємо нового.
+    check_user = sb_api("clients", params={"select": "id", "id": f"eq.{uid}"})
+    
+    if not check_user:
+        print(f"🆕 Creating new client: {name}")
+        sb_api("clients", method="POST", data={
+            "id": uid, 
+            "name": name, 
+            "last_activity": datetime.now().isoformat()
+        })
+    else:
+        # Оновлюємо час останньої активності, щоб він піднявся вгору списку
+        sb_api("clients", method="PATCH", 
+               data={"last_activity": datetime.now().isoformat()}, 
+               params={"id": f"eq.{uid}"})
 
+    # 2. ЗАПИСУЄМО ПОВІДОМЛЕННЯ
     new_row = {
-        "user_id": message.chat.id, "sender": message.from_user.first_name,
-        "text": text_content, "file_path": file_name,
+        "user_id": uid,
+        "sender": name,
+        "text": message.text or "[Медіа]",
         "timestamp": datetime.now().strftime('%H:%M'),
-        "tg_msg_id": message.message_id, "is_read": False
+        "tg_msg_id": message.message_id
     }
     sb_api("messages", method="POST", data=new_row)
+    
+    # 3. ОНОВЛЮЄМО UI
+    page.pubsub.send_all({
+        "type": "update", 
+        "user_id": uid, 
+        "name": name, 
+        "text": message.text or "Файл"
+    })
 
 # --- СЕРВЕР-ЗАГЛУШКА ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -83,3 +105,4 @@ if __name__ == "__main__":
     try: bot.remove_webhook()
     except: pass
     bot.infinity_polling(timeout=20)
+
