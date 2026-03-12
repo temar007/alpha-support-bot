@@ -47,19 +47,26 @@ def handle_tg(message):
 
     print(f"📥 New message from {name} at {timestamp_str}")
 
-    # 1. Перевірка/Створення клієнта (Передаємо params!)
-    check_user = sb_api("clients", method="GET", params={"select": "id", "id": f"eq.{uid}"})
+    # 1. Перевірка/Створення клієнта
+    check_user = sb_api("clients", method="GET", params={"select": "status", "id": f"eq.{uid}"})
     
     if not check_user:
         print(f"🆕 Creating new client: {name}")
         sb_api("clients", method="POST", data={
             "id": uid, 
             "name": name, 
+            "status": "active", # Новий завжди активний
             "last_activity": iso_time
         })
     else:
+        # ОСЬ ТУТ МАГІЯ:
+        # Навіть якщо він був 'archived', ми ставимо 'active' при новому повідомленні
+        print(f"🔄 Client {name} sent message: status -> active")
         sb_api("clients", method="PATCH", 
-               data={"last_activity": iso_time}, 
+               data={
+                   "last_activity": iso_time,
+                   "status": "active"  # Повертаємо в стрій
+               }, 
                params={"id": f"eq.{uid}"})
 
     # 2. Запис повідомлення
@@ -97,3 +104,4 @@ if __name__ == "__main__":
     try: bot.remove_webhook()
     except: pass
     bot.infinity_polling(timeout=20)
+
