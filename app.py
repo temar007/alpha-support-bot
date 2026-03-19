@@ -71,6 +71,8 @@ def handle_tg(message):
     timestamp_str = kyiv_time.strftime('%d.%m.%Y %H:%M')
     iso_time = kyiv_time.isoformat()
 
+    check_user = sb_api("clients", method="GET", params={"select": "id", "id": f"eq.{uid}"})
+
     # 1. Робота з клієнтом (створення/активація)
     if not check_user:
         sb_api("clients", method="POST", data={
