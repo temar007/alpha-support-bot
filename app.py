@@ -37,29 +37,28 @@ def sb_api(table, method="GET", data=None, params=None, is_storage=False, file_c
 # --- ФОНОВЕ ЗАВАНТАЖЕННЯ МЕДІА ---
 def upload_media_bg(msg_db_id, file_id, uid, orig_name, content_type):
     try:
-        # 1. Отримуємо посилання на файл від TG
+        print(f"🛠 BG: Fetching file {file_id} from Telegram...")
         file_info = bot.get_file(file_id)
         tg_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
         
-        # 2. Качаємо файл
-        with httpx.Client() as client:
+        with httpx.Client(timeout=30.0) as client:
             resp = client.get(tg_url)
             if resp.status_code == 200:
-                # 3. Готуємо safe_name
                 file_ext = os.path.splitext(orig_name)[1]
                 safe_name = f"in_{int(time.time())}_{uid}{file_ext}"
                 
-                # 4. Заливаємо в Storage
+                print(f"☁️ BG: Uploading to Supabase as {safe_name}...")
                 up_res = sb_api(safe_name, method="PUT", is_storage=True, file_content=resp.content)
                 
-                if up_res:
-                    # 5. ОНОВЛЮЄМО запис у базі (PATCH)
-                    sb_api("messages", method="PATCH", 
-                           data={"file_path": safe_name, "text": f"📄 {orig_name}"},
-                           params={"id": f"eq.{msg_db_id}"})
-                    print(f"✅ Background upload complete: {safe_name}")
+                # Оновлюємо базу
+                patch_res = sb_api("messages", method="PATCH", 
+                                   data={"file_path": safe_name, "text": f"📄 {orig_name}"},
+                                   params={"id": f"eq.{msg_db_id}"})
+                print(f"✅ BG: Finished! Database updated.")
+            else:
+                print(f"❌ BG: Failed to download from TG. Status: {resp.status_code}")
     except Exception as e:
-        print(f"❌ BG Upload Error: {e}")
+        print(f"❌ BG CRITICAL ERROR: {e}")
 
 # --- ОСНОВНИЙ ОБРОБНИК ---
 @bot.message_handler(content_types=['text', 'photo', 'document', 'video', 'voice'])
@@ -77,10 +76,13 @@ def handle_tg(message):
     else:
         sb_api("clients", method="PATCH", data={"last_activity": iso_time, "status": "active"}, params={"id": f"eq.{uid}"})
 
-    # 2. Швидкий запис у базу
+    # --- 2. Швидкий запис у базу ---
     is_media = message.content_type in ['photo', 'document', 'video', 'voice']
-    initial_text = message.text or message.caption or ("[Отримуємо медіа...]" if is_media else "")
+    initial_text = message.text or message.caption or ""
+    if is_media and not initial_text:
+        initial_text = "[Отримуємо медіа...]"
     
+    # Створюємо запис і ЯВНО просимо повернути дані (return=representation вже є в sb_api)
     new_msg_res = sb_api("messages", method="POST", data={
         "user_id": uid,
         "sender": name,
@@ -89,25 +91,29 @@ def handle_tg(message):
         "tg_msg_id": message.message_id
     })
 
-    # 3. Якщо це медіа — запускаємо фон
-    if is_media and new_msg_res:
-        msg_db_id = new_msg_res[0]['id']
+    # Перевіряємо, чи отримали ми ID від бази
+    if is_media and new_msg_res and isinstance(new_msg_res, list) and len(new_msg_res) > 0:
+        msg_db_id = new_msg_res[0].get('id')
         
-        if message.content_type == 'photo':
-            raw_file = message.photo[-1]
-            orig_name = f"img_{int(time.time())}.jpg"
-        else:
-            raw_file = getattr(message, message.content_type)
-            orig_name = getattr(raw_file, 'file_name', f"file_{int(time.time())}")
+        if msg_db_id:
+            # Визначаємо файл перед запуском потоку
+            if message.content_type == 'photo':
+                raw_file = message.photo[-1]
+                orig_name = f"img_{int(time.time())}.jpg"
+            else:
+                raw_file = getattr(message, message.content_type)
+                orig_name = getattr(raw_file, 'file_name', f"file_{int(time.time())}")
 
-        # Запуск фонового процесу
-        threading.Thread(
-            target=upload_media_bg, 
-            args=(msg_db_id, raw_file.file_id, uid, orig_name, message.content_type),
-            daemon=True
-        ).start()
-
-    print(f"📥 Fast response sent for {name}")
+            # ЗАПУСК ФОНУ
+            t = threading.Thread(
+                target=upload_media_bg, 
+                args=(msg_db_id, raw_file.file_id, uid, orig_name, message.content_type)
+            )
+            t.daemon = True
+            t.start()
+            print(f"🚀 Started background upload for msg_id: {msg_db_id}")
+    else:
+        print(f"📥 Plain text message from {name} saved.")
 
 # --- HEALTH CHECK SERVER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -124,3 +130,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling(timeout=20)
+
