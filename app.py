@@ -64,17 +64,26 @@ def upload_media_bg(msg_db_id, file_id, uid, orig_name, content_type):
 @bot.message_handler(content_types=['text', 'photo', 'document', 'video', 'voice'])
 def handle_tg(message):
     uid = message.chat.id
-    name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or "Unknown"
+    first = message.from_user.first_name or ""
+    last = message.from_user.last_name or ""
+    name = f"{first} {last}".strip() or "Unknown"
     kyiv_time = datetime.now() + timedelta(hours=2)
-    timestamp_str = kyiv_time.strftime('%H:%M')
+    timestamp_str = kyiv_time.strftime('%d.%m.%Y %H:%M')
     iso_time = kyiv_time.isoformat()
 
     # 1. Робота з клієнтом (створення/активація)
-    check_user = sb_api("clients", method="GET", params={"select": "id", "id": f"eq.{uid}"})
     if not check_user:
-        sb_api("clients", method="POST", data={"id": uid, "name": name, "status": "active", "last_activity": iso_time})
+        sb_api("clients", method="POST", data={
+            "id": uid, 
+            "name": name, 
+            "status": "active", 
+            "last_activity": iso_time
+        })
     else:
-        sb_api("clients", method="PATCH", data={"last_activity": iso_time, "status": "active"}, params={"id": f"eq.{uid}"})
+        # Оновлюємо статус на active, якщо клієнт написав сам
+        sb_api("clients", method="PATCH", 
+               data={"last_activity": iso_time, "status": "active", "name": name}, # Оновимо ім'я теж, про всяк випадок
+               params={"id": f"eq.{uid}"})
 
     # --- 2. Швидкий запис у базу ---
     is_media = message.content_type in ['photo', 'document', 'video', 'voice']
@@ -130,4 +139,5 @@ if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling(timeout=20)
+
 
