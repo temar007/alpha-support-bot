@@ -60,6 +60,19 @@ def upload_media_bg(msg_db_id, file_id, uid, orig_name, content_type):
     except Exception as e:
         print(f"❌ BG CRITICAL ERROR: {e}")
 
+# --- РУЧНІ КОМАНДИ ---
+@bot.message_handler(commands=['id', 'myid'])
+def handle_id_command(message):
+    uid = message.chat.id
+    text = (
+        f"Ваш Telegram ID: <code>{uid}</code>\n"
+        f"<i>(натисніть на номер, щоб скопіювати)</i>"
+    )
+    try:
+        bot.reply_to(message, text, parse_mode="HTML")
+    except Exception as e:
+        print(f"!!! Error sending ID reply: {e}")
+
 # --- ОСНОВНИЙ ОБРОБНИК ---
 @bot.message_handler(content_types=['text', 'photo', 'document', 'video', 'voice'])
 def handle_tg(message):
@@ -75,16 +88,28 @@ def handle_tg(message):
 
     # 1. Робота з клієнтом (створення/активація)
     if not check_user:
+        # Реєструємо нового клієнта
         sb_api("clients", method="POST", data={
             "id": uid, 
             "name": name, 
             "status": "active", 
             "last_activity": iso_time
         })
+        
+        # Надсилаємо ID при першому зверненні
+        welcome_text = (
+            f"Вітаємо, {name}!\n\n"
+            f"Ваш ID: <code>{uid}</code>\n"
+            f"<i>(натисніть на номер, щоб скопіювати)</i>"
+        )
+        try:
+            bot.send_message(uid, welcome_text, parse_mode="HTML")
+        except Exception as e:
+            print(f"!!! Error sending welcome ID: {e}")
     else:
-        # Оновлюємо статус на active, якщо клієнт написав сам
+        # Оновлюємо статус на active, якщо клієнт уже є в базі
         sb_api("clients", method="PATCH", 
-               data={"last_activity": iso_time, "status": "active", "name": name}, # Оновимо ім'я теж, про всяк випадок
+               data={"last_activity": iso_time, "status": "active", "name": name},
                params={"id": f"eq.{uid}"})
 
     # --- 2. Швидкий запис у базу ---
@@ -141,5 +166,3 @@ if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling(timeout=20)
-
-
